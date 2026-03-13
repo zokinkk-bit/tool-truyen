@@ -5,25 +5,29 @@ from deep_translator import GoogleTranslator
 import google.generativeai as genai
 import os
 
-# --- CẤU HÌNH BẢO MẬT & FIX LỖI 404 ---
-try:
-    GOOGLE_API_KEY = st.secrets["GEMINI_KEY"]
-    genai.configure(api_key=GOOGLE_API_KEY)
-    
-    # Hàm tìm model khả dụng để không bao giờ bị lỗi 404 nữa
-    def get_working_model():
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_methods:
-                if 'gemini-1.5-flash' in m.name:
-                    return m.name
-        return 'gemini-pro' # Phương án dự phòng cuối cùng
+# --- CẤU HÌNH BẢO MẬT ---
+target_model_name = "Chưa cấu hình" # Khởi tạo giá trị mặc định
 
-    target_model_name = get_working_model()
-    ai_model = genai.GenerativeModel(target_model_name)
+try:
+    if "GEMINI_KEY" not in st.secrets:
+        st.error("Thiếu GEMINI_KEY trong Secrets của Streamlit!")
+    else:
+        GOOGLE_API_KEY = st.secrets["GEMINI_KEY"]
+        genai.configure(api_key=GOOGLE_API_KEY)
+        
+        # Tìm model khả dụng
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_methods]
+        if models:
+            # Ưu tiên flash, nếu không có thì lấy cái đầu tiên
+            target_model_name = next((m for m in models if "flash" in m), models[0])
+            ai_model = genai.GenerativeModel(target_model_name)
+        else:
+            st.error("Không tìm thấy Model nào khả dụng với Key này!")
 except Exception as e:
     st.error(f"Lỗi cấu hình API: {e}")
+    st.info("Mẹo: Nếu lỗi 403 Leaked, hãy tạo Key mới tại Google AI Studio và cập nhật Secrets.")
 
-st.set_page_config(page_title="Việt Comic Reader - Ultimate Fix", layout="wide")
+st.set_page_config(page_title="Việt Comic Reader - ITC Pro", layout="wide")
 
 @st.cache_resource
 def load_ocr():
@@ -42,7 +46,7 @@ with st.sidebar:
         st.success(f"Đã nhận {len(uploaded_files)} trang.")
 
 # --- MÀN HÌNH CHÍNH ---
-st.title("📖 AI Comic Reader - Bản Sửa Lỗi Tiếng Việt")
+st.title("📖 AI Comic Reader - Bản Bảo Mật")
 
 if not uploaded_files:
     st.warning("👈 Hãy tải ảnh ở thanh bên trái!")
@@ -62,7 +66,6 @@ else:
                 temp_name = f"temp_{i}.jpg"
                 img.save(temp_name)
                 results = reader.readtext(temp_name, detail=0)
-                # Thêm dấu chấm để tách câu rõ ràng cho AI
                 full_text += " ".join(results) + " . "
                 if os.path.exists(temp_name): os.remove(temp_name)
             except Exception as e:
@@ -72,34 +75,28 @@ else:
 
         if full_text.strip():
             st.divider()
-            with st.spinner("AI đang phục hồi tiếng Việt và viết review..."):
+            with st.spinner("AI đang xử lý nội dung..."):
                 try:
-                    # Dùng AI để "giải mã" đống chữ dính nhau
+                    # Dùng AI sửa lỗi dịch dính chữ và mất dấu
                     prompt_fix = f"""
-                    Nhiệm vụ: Phục hồi và Review truyện tranh.
-                    Dữ liệu thô (bị dính chữ, thiếu dấu, rác từ web): "{full_text[:3500]}"
+                    Nhiệm vụ: Phục hồi tiếng Việt và Review truyện.
+                    Dữ liệu thô từ OCR: "{full_text[:3000]}"
                     
                     Yêu cầu:
-                    1. Phục hồi đoạn văn trên thành tiếng Việt có dấu, đúng ngữ pháp, tách từ rõ ràng.
-                    2. Loại bỏ các từ rác của web như 'BAOTANGTRUYENVIP', 'FLAMECOMICS', 'DONG CON'...
-                    3. Tóm tắt nội dung: Đây là cảnh đối thoại giữa một người cha cực đoan và đứa con trai trong hầm ngục?
-                    4. Viết bài review ngắn và chấm điểm.
-                    
-                    Trình bày bằng Markdown chuyên nghiệp.
+                    1. Phục hồi thành tiếng Việt chuẩn, có dấu, tách từ rõ ràng.
+                    2. Loại bỏ rác quảng cáo web.
+                    3. Tóm tắt nội dung kịch tính và chấm điểm.
                     """
                     
                     response = ai_model.generate_content(prompt_fix)
-                    
-                    st.subheader("🤖 Kết quả phân tích (Đã Fix lỗi tiếng Việt)")
+                    st.subheader("🤖 Kết quả từ AI")
                     st.markdown(response.text)
                     
                 except Exception as ai_err:
-                    st.error(f"Lỗi AI: {ai_err}")
-                    # Nếu AI lỗi, dùng bộ dịch tạm thời
-                    dich_tam = GoogleTranslator(source='auto', target='vi').translate(full_text[:2000])
-                    st.write("Bản dịch tạm:", dich_tam)
+                    st.error(f"AI không phản hồi: {ai_err}")
+                    st.write("Bản dịch thô:", GoogleTranslator(source='auto', target='vi').translate(full_text[:1500]))
         else:
             st.warning("Không tìm thấy chữ để xử lý.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption(f"Model: {target_model_name}")
+st.sidebar.caption(f"Model hiện tại: {target_model_name}")
