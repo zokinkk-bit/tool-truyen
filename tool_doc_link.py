@@ -6,6 +6,8 @@ from io import BytesIO
 from deep_translator import GoogleTranslator
 import google.generativeai as genai
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+import os
 
 # --- CẤU HÌNH BẢO MẬT ---
 try:
@@ -13,9 +15,9 @@ try:
     genai.configure(api_key=GOOGLE_API_KEY)
     ai_model = genai.GenerativeModel('gemini-1.5-flash')
 except:
-    st.error("Lỗi API Key!")
+    st.error("Lỗi API Key trong Secrets!")
 
-st.set_page_config(page_title="Việt Comic Chapter Reader", layout="wide")
+st.set_page_config(page_title="Việt Comic Chapter Reader Pro", layout="wide")
 
 @st.cache_resource
 def load_ocr():
@@ -24,62 +26,80 @@ def load_ocr():
 reader = load_ocr()
 
 def get_all_images_from_url(url):
-    """Hàm tìm tất cả link ảnh trong một Chapter"""
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Tìm tất cả thẻ img có chứa link ảnh truyện
-    img_links = []
-    for img in soup.find_all('img'):
-        src = img.get('src') or img.get('data-src') or img.get('data-original')
-        if src and ('.jpg' in src or '.png' in src or '.webp' in src):
-            if not src.startswith('http'):
-                src = "https:" + src if src.startswith('//') else url + src
-            img_links.append(src)
-    
-    # Lọc bỏ các icon nhỏ, chỉ lấy ảnh truyện (thường to hơn 500px)
-    return list(set(img_links)) 
+    """Hàm tìm tất cả link ảnh trong một Chapter (Hỗ trợ Lazy Load & Data-Attributes)"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': url
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        img_links = []
+        for img in soup.find_all('img'):
+            src = (img.get('data-src') or img.get('data-original') or 
+                   img.get('src') or img.get('data-cdn') or img.get('srcset'))
+            if src:
+                src = src.strip().split(' ')[0]
+                full_src = urljoin(url, src)
+                if any(ext in full_src.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+                    if not any(bad in full_src.lower() for bad in ['logo', 'icon', 'avatar', 'button']):
+                        img_links.append(full_src)
+        return list(dict.fromkeys(img_links))
+    except Exception as e:
+        st.error(f"Lỗi kết nối web: {e}")
+        return []
 
 # --- GIAO DIỆN ---
-st.title("📖 Tool Review Cả Chapter Truyện")
-url_chapter = st.text_input("Dán link Chapter truyện (Ví dụ: link tập 1...):")
+st.title("📖 AI Comic Reviewer - Chuyên Gia Phân Tích Chapter")
+url_chapter = st.text_input("Dán link Chapter truyện cần review:")
 
-if st.button("Quét Toàn Bộ Chapter 🚀"):
+if st.button("Bắt đầu quét & Việt hóa nhân vật 🚀"):
     if url_chapter:
-        with st.spinner("Đang phân tích Chapter..."):
+        with st.spinner("Đang tìm kiếm trang ảnh..."):
             all_imgs = get_all_images_from_url(url_chapter)
-            st.success(f"Tìm thấy {len(all_imgs)} trang ảnh trong tập này!")
-        
-        full_text = ""
-        # Chỉ quét 5-10 trang đầu để review (tránh bị treo máy)
-        limit = min(len(all_imgs), 5) 
-        
-        for i in range(limit):
-            with st.status(f"Đang đọc trang {i+1}/{limit}...", expanded=True):
-                try:
-                    res = requests.get(all_imgs[i], timeout=10)
-                    img = PIL.Image.open(BytesIO(res.content))
-                    img.save("temp.jpg")
-                    
-                    # Quét chữ
-                    results = reader.readtext("temp.jpg", detail=0)
-                    page_text = " ".join(results)
-                    full_text += page_text + " "
-                    st.write(f"Đã đọc xong trang {i+1}")
-                except:
-                    st.write(f"Bỏ qua trang {i+1} do lỗi.")
-
-        if full_text:
-            dich = GoogleTranslator(source='auto', target='vi').translate(full_text[:3000]) # Giới hạn 3000 ký tự để AI review chuẩn
             
-            st.divider()
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("📝 Tóm tắt nội dung tập này")
-                st.write(dich)
-            with col2:
-                st.subheader("🤖 AI Review Toàn Chapter")
-                prompt = f"Dựa trên nội dung tập truyện này: {dich}, hãy viết review cực hay, phân tích cốt truyện và chấm điểm."
-                review = ai_model.generate_content(prompt)
-                st.success(review.text)
+        if all_imgs:
+            st.success(f"Tìm thấy {len(all_imgs)} trang ảnh!")
+            full_text = ""
+            limit = min(len(all_imgs), 7) 
+            progress_bar = st.progress(0)
+            
+            for i in range(limit):
+                with st.status(f"Đang đọc trang {i+1}/{limit}...", expanded=False):
+                    try:
+                        headers = {'User-Agent': 'Mozilla/5.0', 'Referer': url_chapter}
+                        res = requests.get(all_imgs[i], headers=headers, timeout=10)
+                        img = PIL.Image.open(BytesIO(res.content))
+                        if img.mode != 'RGB': img = img.convert('RGB')
+                        img.save("temp.jpg")
+                        results = reader.readtext("temp.jpg", detail=0)
+                        full_text += " ".join(results) + " "
+                    except:
+                        st.write(f"❌ Lỗi trang {i+1}")
+                progress_bar.progress((i + 1) / limit)
+
+            if full_text.strip():
+                with st.spinner("AI đang dịch thuật & Chuyển đổi tên nhân vật..."):
+                    # Dịch thô
+                    dich_tho = GoogleTranslator(source='auto', target='vi').translate(full_text[:3500])
+                    
+                    # Bước nâng cao: AI nhận diện nhân vật và viết review
+                    prompt = f"""
+                    Dựa trên nội dung dịch thô sau: {dich_tho}
+                    1. Hãy nhận diện các nhân vật chính và phụ (Nếu tên là tiếng Trung/Pinyin, hãy chuyển sang Hán Việt chuẩn).
+                    2. Tóm tắt cốt truyện tập này một cách lôi cuốn.
+                    3. Viết bài review phân tích diễn biến và cảm xúc nhân vật.
+                    4. Chấm điểm tập truyện.
+                    Ghi chú: Trình bày đẹp mắt bằng Markdown.
+                    """
+                    review = ai_model.generate_content(prompt)
+                
+                st.divider()
+                st.subheader("🤖 Kết quả phân tích từ AI")
+                st.markdown(review.text)
+            else:
+                st.warning("Không quét được nội dung chữ.")
+        else:
+            st.error("Không tìm thấy ảnh. Hãy kiểm tra lại link!")
+
+if os.path.exists("temp.jpg"): os.remove("temp.jpg")
