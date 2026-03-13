@@ -6,18 +6,33 @@ import google.generativeai as genai
 import os
 import re
 
-# --- CẤU HÌNH BẢO MẬT ---
+# --- CẤU HÌNH BẢO MẬT & AUTO-DETECT MODEL ---
+ai_model = None
+target_model_name = "Đang kiểm tra..."
+
 try:
     if "GEMINI_KEY" not in st.secrets:
-        st.error("Thiếu GEMINI_KEY trong Secrets!")
+        st.error("Thiếu GEMINI_KEY trong Secrets của Streamlit!")
     else:
         genai.configure(api_key=st.secrets["GEMINI_KEY"])
-        # Sử dụng model gemini-1.5-flash trực tiếp, không dùng RequestOptions lỗi thời
-        ai_model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Tự động quét danh sách model để tránh lỗi 404 dứt điểm
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Ưu tiên các dòng Flash, nếu không có thì lấy bất cứ cái gì dùng được
+        selected = next((m for m in available_models if "1.5-flash" in m), None)
+        if not selected:
+            selected = available_models[0] if available_models else None
+            
+        if selected:
+            target_model_name = selected
+            ai_model = genai.GenerativeModel(target_model_name)
+        else:
+            st.error("Không tìm thấy model nào khả dụng!")
 except Exception as e:
-    st.error(f"Lỗi khởi tạo AI: {e}")
+    st.error(f"Lỗi khởi tạo hệ thống: {e}")
 
-st.set_page_config(page_title="Việt Comic Reader - Final Fix", layout="wide")
+st.set_page_config(page_title="Việt Comic Reader - Ultra Stable", layout="wide")
 
 @st.cache_resource
 def load_ocr():
@@ -25,14 +40,13 @@ def load_ocr():
 
 reader = load_ocr()
 
-# --- HÀM LỌC RÁC (DỌN DẸP CHỮ DÍNH) ---
-def clean_comic_text(text):
-    # Loại bỏ tên các web truyện rác
-    trash_words = ['BAOTANGTRUYENVIP', 'FLAMECOMICS', 'WEBCHINH', 'NHOMDICH', 'COMIC', 'NETTRUYEN']
-    for word in trash_words:
-        text = re.sub(word, '', text, flags=re.IGNORECASE)
-    # Loại bỏ các ký tự đặc biệt thừa thãi
-    text = re.sub(r'[@#$*%^&()_+={}\[\]|\\:;"\'<>,?/]', ' ', text)
+# --- HÀM LÀM SẠCH VĂN BẢN ---
+def clean_text(text):
+    # Xóa rác web và các ký tự gây nhiễu
+    junk = ['BAOTANGTRUYENVIP', 'FLAMECOMICS', 'WEBCHINH', 'NHOMDICH', 'COMIC', 'DANGTAIWEB']
+    for w in junk:
+        text = re.sub(w, '', text, flags=re.IGNORECASE)
+    text = re.sub(r'[^\w\s.!?]', ' ', text) # Chỉ giữ lại chữ, số và dấu câu cơ bản
     return " ".join(text.split())
 
 # --- SIDEBAR ---
@@ -44,9 +58,11 @@ with st.sidebar:
     if uploaded_files:
         uploaded_files = sorted(uploaded_files, key=lambda x: x.name)
         st.success(f"Đã nhận {len(uploaded_files)} trang.")
+    st.divider()
+    st.caption(f"Model active: {target_model_name}")
 
 # --- MÀN HÌNH CHÍNH ---
-st.title("📖 AI Comic Reader - Bản Fix Lỗi 'RequestOptions'")
+st.title("📖 AI Comic Reader - Bản Phục Hồi Nội Dung")
 
 if not uploaded_files:
     st.warning("👈 Hãy tải ảnh ở thanh bên trái để bắt đầu!")
@@ -74,23 +90,23 @@ else:
             progress_bar.progress((i + 1) / len(uploaded_files))
 
         if full_text.strip():
-            # Dọn dẹp văn bản thô trước khi gửi AI
-            cleaned_text = clean_comic_text(full_text)
+            # Dọn dẹp văn bản thô
+            cleaned = clean_text(full_text)
             
             st.divider()
-            with st.spinner("AI đang phục hồi nội dung truyện..."):
+            with st.spinner("AI đang phục hồi nội dung và viết Review..."):
                 try:
-                    # Prompt cực mạnh để AI tự sửa dấu
+                    # Prompt "cứu vớt" nội dung nát
                     prompt = f"""
-                    Dữ liệu thô từ truyện tranh: "{cleaned_text[:3500]}"
+                    Dữ liệu truyện tranh (OCR thô): "{cleaned[:3500]}"
                     
                     Yêu cầu:
-                    1. Phục hồi đoạn văn trên thành tiếng Việt chuẩn (có dấu, đúng chính tả, tách chữ).
-                    2. Chuyển tên nhân vật sang Hán Việt.
-                    3. Tóm tắt nội dung và Review ngắn gọn.
-                    4. Chấm điểm Chapter.
+                    1. Đây là truyện về một người bị giam cầm trong hầm ngục. Hãy phục hồi các câu thoại thành tiếng Việt có dấu chuẩn.
+                    2. Chuyển tên nhân vật sang Hán Việt (ví dụ: mẹ chết, người cha độc tài...).
+                    3. Tóm tắt diễn biến kịch tính: Người con muốn thoát khỏi hầm, người cha ngăn cản bằng lời lẽ cực đoan?
+                    4. Viết bài review ngắn gọn, đánh giá tình huống và chấm điểm.
                     
-                    Ghi chú: Nếu chữ quá nát, hãy dựa vào ngữ cảnh (ví dụ: cha nói chuyện với con, hầm ngục) để đoán nội dung.
+                    Trình bày Markdown đẹp mắt.
                     """
                     
                     response = ai_model.generate_content(prompt)
@@ -98,12 +114,13 @@ else:
                     st.markdown(response.text)
                     
                 except Exception as ai_err:
-                    st.error(f"Lỗi AI: {ai_err}")
-                    dich_tam = GoogleTranslator(source='auto', target='vi').translate(cleaned_text[:1500])
-                    st.info("Bản dịch tạm thời:")
-                    st.write(dich_tam)
+                    st.error(f"AI lỗi phản hồi: {ai_err}")
+                    # Backup dịch thô
+                    dich = GoogleTranslator(source='auto', target='vi').translate(cleaned[:1500])
+                    st.info("Nội dung dịch thô (AI không phản hồi):")
+                    st.write(dich)
         else:
             st.warning("Không tìm thấy chữ để xử lý.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Sửa lỗi RequestOptions cho Việt ITC")
+st.sidebar.caption("ITC Student Project - Việt")
