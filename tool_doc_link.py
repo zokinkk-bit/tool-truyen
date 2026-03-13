@@ -5,48 +5,51 @@ from deep_translator import GoogleTranslator
 import google.generativeai as genai
 import os
 
-# --- CẤU HÌNH BẢO MẬT ---
+# --- CẤU HÌNH BẢO MẬT & FIX LỖI 404 ---
 try:
     GOOGLE_API_KEY = st.secrets["GEMINI_KEY"]
     genai.configure(api_key=GOOGLE_API_KEY)
-    # Sửa lại tên model chuẩn nhất để fix lỗi 404
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error(f"Lỗi cấu hình: {e}")
+    
+    # Hàm tìm model khả dụng để không bao giờ bị lỗi 404 nữa
+    def get_working_model():
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_methods:
+                if 'gemini-1.5-flash' in m.name:
+                    return m.name
+        return 'gemini-pro' # Phương án dự phòng cuối cùng
 
-st.set_page_config(page_title="Việt Comic Reader - Fix Lỗi 404 & Dịch", layout="wide")
+    target_model_name = get_working_model()
+    ai_model = genai.GenerativeModel(target_model_name)
+except Exception as e:
+    st.error(f"Lỗi cấu hình API: {e}")
+
+st.set_page_config(page_title="Việt Comic Reader - Ultimate Fix", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # Load nhận diện tiếng Trung và tiếng Anh
     return easyocr.Reader(['ch_sim', 'en'])
 
 reader = load_ocr()
 
-# --- SIDEBAR: QUẢN LÝ DANH SÁCH ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("📂 Quản lý Chapter")
-    uploaded_files = st.file_uploader("Tải ảnh lên đây:", 
+    uploaded_files = st.file_uploader("Tải ảnh truyện:", 
                                       type=['jpg', 'jpeg', 'png', 'webp'], 
                                       accept_multiple_files=True)
-    
     if uploaded_files:
         uploaded_files = sorted(uploaded_files, key=lambda x: x.name)
-        st.subheader("Trình tự quét:")
-        for idx, f in enumerate(uploaded_files):
-            st.write(f"{idx+1}. {f.name}")
-        
-        st.info("💡 Mẹo: Đặt tên file 01, 02... để máy tự ghép đúng thứ tự.")
+        st.success(f"Đã nhận {len(uploaded_files)} trang.")
 
 # --- MÀN HÌNH CHÍNH ---
-st.title("📖 AI Comic Reader - Bản Fix Lỗi Dịch")
+st.title("📖 AI Comic Reader - Bản Sửa Lỗi Tiếng Việt")
 
 if not uploaded_files:
-    st.warning("👈 Hãy tải các trang truyện ở thanh bên trái để bắt đầu!")
+    st.warning("👈 Hãy tải ảnh ở thanh bên trái!")
 else:
-    if st.button("Bắt đầu quét & Review Chapter 🚀"):
+    if st.button("Bắt đầu quét & Review 🚀"):
         full_text = ""
-        st.subheader("🖼️ Nội dung Chapter (Đã ghép nối tiếp)")
+        st.subheader("🖼️ Nội dung Chapter")
         
         progress_bar = st.progress(0)
         
@@ -54,58 +57,49 @@ else:
             try:
                 img = PIL.Image.open(file)
                 if img.mode != 'RGB': img = img.convert('RGB')
-                
-                # Hiển thị ảnh
                 st.image(img, use_container_width=True)
                 
-                # OCR xử lý
                 temp_name = f"temp_{i}.jpg"
                 img.save(temp_name)
                 results = reader.readtext(temp_name, detail=0)
-                # Thêm dấu cách sau mỗi trang để tránh dính chữ
+                # Thêm dấu chấm để tách câu rõ ràng cho AI
                 full_text += " ".join(results) + " . "
-                
-                if os.path.exists(temp_name):
-                    os.remove(temp_name)
-                
+                if os.path.exists(temp_name): os.remove(temp_name)
             except Exception as e:
-                st.error(f"Lỗi trang {file.name}: {e}")
+                st.error(f"Lỗi trang {file.name}")
             
             progress_bar.progress((i + 1) / len(uploaded_files))
 
-        # --- AI REVIEW & FIX DỊCH ---
         if full_text.strip():
             st.divider()
-            with st.spinner("AI đang sửa lỗi chính tả và viết review..."):
+            with st.spinner("AI đang phục hồi tiếng Việt và viết review..."):
                 try:
-                    # Dịch thô từ Google (thường bị lỗi dấu)
-                    dich_tho = GoogleTranslator(source='auto', target='vi').translate(full_text[:3000])
+                    # Dùng AI để "giải mã" đống chữ dính nhau
+                    prompt_fix = f"""
+                    Nhiệm vụ: Phục hồi và Review truyện tranh.
+                    Dữ liệu thô (bị dính chữ, thiếu dấu, rác từ web): "{full_text[:3500]}"
                     
-                    # Dùng AI làm nhiệm vụ sửa dấu, cách chữ và review
-                    prompt = f"""
-                    Nội dung sau đây được dịch từ truyện tranh nhưng bị lỗi mất dấu, dính chữ và thiếu dấu câu:
-                    "{dich_tho}"
+                    Yêu cầu:
+                    1. Phục hồi đoạn văn trên thành tiếng Việt có dấu, đúng ngữ pháp, tách từ rõ ràng.
+                    2. Loại bỏ các từ rác của web như 'BAOTANGTRUYENVIP', 'FLAMECOMICS', 'DONG CON'...
+                    3. Tóm tắt nội dung: Đây là cảnh đối thoại giữa một người cha cực đoan và đứa con trai trong hầm ngục?
+                    4. Viết bài review ngắn và chấm điểm.
                     
-                    Yêu cầu Việt hóa:
-                    1. Hãy sửa lại đoạn văn trên thành tiếng Việt chuẩn (đầy đủ dấu, cách chữ, dấu câu).
-                    2. Chuyển tên nhân vật sang Hán Việt (Ví dụ: Lin Fan -> Lâm Phàm).
-                    3. Tóm tắt nội dung và viết bài review cực hay kèm chấm điểm.
-                    
-                    Trình bày Markdown đẹp mắt.
+                    Trình bày bằng Markdown chuyên nghiệp.
                     """
                     
-                    response = ai_model.generate_content(prompt)
+                    response = ai_model.generate_content(prompt_fix)
                     
-                    st.subheader("🤖 Kết quả phân tích (Đã sửa lỗi dấu & cách chữ)")
-                    st.success("Đã hoàn thành!")
+                    st.subheader("🤖 Kết quả phân tích (Đã Fix lỗi tiếng Việt)")
                     st.markdown(response.text)
                     
                 except Exception as ai_err:
-                    st.error(f"Lỗi khi gọi AI Gemini: {ai_err}")
-                    st.info("Nội dung dịch thô để bạn xem tạm:")
-                    st.write(dich_tho)
+                    st.error(f"Lỗi AI: {ai_err}")
+                    # Nếu AI lỗi, dùng bộ dịch tạm thời
+                    dich_tam = GoogleTranslator(source='auto', target='vi').translate(full_text[:2000])
+                    st.write("Bản dịch tạm:", dich_tam)
         else:
             st.warning("Không tìm thấy chữ để xử lý.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Sửa lỗi bởi Việt - ITC Student")
+st.sidebar.caption(f"Model: {target_model_name}")
