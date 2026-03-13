@@ -9,14 +9,16 @@ import os
 try:
     GOOGLE_API_KEY = st.secrets["GEMINI_KEY"]
     genai.configure(api_key=GOOGLE_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-except:
-    st.error("Lỗi API Key! Hãy kiểm tra mục Secrets.")
+    # Sửa tên model thành đường dẫn đầy đủ để tránh lỗi NotFound
+    ai_model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+except Exception as e:
+    st.error(f"Lỗi cấu hình: {e}")
 
 st.set_page_config(page_title="Việt Comic Reader - Sidebar Edition", layout="wide")
 
 @st.cache_resource
 def load_ocr():
+    # Load nhận diện tiếng Trung và tiếng Anh
     return easyocr.Reader(['ch_sim', 'en'])
 
 reader = load_ocr()
@@ -29,7 +31,7 @@ with st.sidebar:
                                       accept_multiple_files=True)
     
     if uploaded_files:
-        # Sắp xếp ảnh theo tên file
+        # Sắp xếp ảnh theo tên file để đúng thứ tự trang
         uploaded_files = sorted(uploaded_files, key=lambda x: x.name)
         st.subheader("Trình tự quét:")
         for idx, f in enumerate(uploaded_files):
@@ -55,14 +57,17 @@ else:
                 if img.mode != 'RGB': img = img.convert('RGB')
                 
                 # Hiển thị ảnh tràn màn hình như web truyện
-                st.image(img, use_column_width=True)
+                st.image(img, use_container_width=True)
                 
                 # OCR xử lý ngầm
                 temp_name = f"temp_{i}.jpg"
                 img.save(temp_name)
                 results = reader.readtext(temp_name, detail=0)
                 full_text += " ".join(results) + " "
-                os.remove(temp_name)
+                
+                # Xóa file tạm ngay sau khi quét trang đó
+                if os.path.exists(temp_name):
+                    os.remove(temp_name)
                 
             except Exception as e:
                 st.error(f"Lỗi trang {file.name}: {e}")
@@ -73,22 +78,35 @@ else:
         if full_text.strip():
             st.divider()
             with st.spinner("AI đang phân tích nội dung truyện..."):
-                dich = GoogleTranslator(source='auto', target='vi').translate(full_text[:3500])
-                prompt = f"""
-                Dưới đây là nội dung truyện: {dich}
-                1. Nhận diện nhân vật (Chuyển tên Pinyin sang Hán Việt nếu là truyện Trung).
-                2. Tóm tắt cốt truyện Chapter này.
-                3. Viết bài review ngắn và chấm điểm.
-                Trình bày đẹp bằng Markdown.
-                """
-                review = ai_model.generate_content(prompt)
-                
-            st.subheader("🤖 Phân tích chuyên sâu từ AI")
-            st.success("Đã hoàn thành bài review!")
-            st.markdown(review.text)
+                try:
+                    # Dịch nội dung (Giới hạn 3500 ký tự để không lỗi API)
+                    dich = GoogleTranslator(source='auto', target='vi').translate(full_text[:3500])
+                    
+                    prompt = f"""
+                    Dưới đây là nội dung dịch thô từ các trang truyện: {dich}
+                    
+                    Yêu cầu:
+                    1. Nhận diện nhân vật (Nếu tên là Pinyin như Lin Fan, Xiao Yan... hãy đổi sang Hán Việt như Lâm Phàm, Tiêu Viêm).
+                    2. Tóm tắt cốt truyện kịch tính của chapter này.
+                    3. Viết bài review ngắn gọn, phân tích tình huống hay nhất.
+                    4. Chấm điểm chapter trên thang điểm 10.
+                    
+                    Trình bày đẹp mắt bằng Markdown với các icon phù hợp.
+                    """
+                    
+                    response = ai_model.generate_content(prompt)
+                    
+                    st.subheader("🤖 Phân tích chuyên sâu từ AI")
+                    st.success("Đã hoàn thành bài review!")
+                    st.markdown(response.text)
+                    
+                except Exception as ai_err:
+                    st.error(f"Lỗi khi gọi AI Gemini: {ai_err}")
+                    st.info("Nội dung dịch thô để bạn đọc tạm:")
+                    st.write(dich)
         else:
             st.warning("Không tìm thấy nội dung chữ để AI phân tích.")
 
 # Dọn dẹp footer
 st.sidebar.markdown("---")
-st.sidebar.caption("Phiên bản Pro của Việt - ITC")
+st.sidebar.caption("Phiên bản Pro của Việt - ITC Student")
