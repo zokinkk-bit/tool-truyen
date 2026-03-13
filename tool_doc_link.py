@@ -9,12 +9,12 @@ import os
 try:
     GOOGLE_API_KEY = st.secrets["GEMINI_KEY"]
     genai.configure(api_key=GOOGLE_API_KEY)
-    # Sửa tên model thành đường dẫn đầy đủ để tránh lỗi NotFound
-    ai_model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+    # Sửa lại tên model chuẩn nhất để fix lỗi 404
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     st.error(f"Lỗi cấu hình: {e}")
 
-st.set_page_config(page_title="Việt Comic Reader - Sidebar Edition", layout="wide")
+st.set_page_config(page_title="Việt Comic Reader - Fix Lỗi 404 & Dịch", layout="wide")
 
 @st.cache_resource
 def load_ocr():
@@ -31,7 +31,6 @@ with st.sidebar:
                                       accept_multiple_files=True)
     
     if uploaded_files:
-        # Sắp xếp ảnh theo tên file để đúng thứ tự trang
         uploaded_files = sorted(uploaded_files, key=lambda x: x.name)
         st.subheader("Trình tự quét:")
         for idx, f in enumerate(uploaded_files):
@@ -40,7 +39,7 @@ with st.sidebar:
         st.info("💡 Mẹo: Đặt tên file 01, 02... để máy tự ghép đúng thứ tự.")
 
 # --- MÀN HÌNH CHÍNH ---
-st.title("📖 AI Comic Reader - Chế độ Ghép Ảnh & Sidebar")
+st.title("📖 AI Comic Reader - Bản Fix Lỗi Dịch")
 
 if not uploaded_files:
     st.warning("👈 Hãy tải các trang truyện ở thanh bên trái để bắt đầu!")
@@ -56,16 +55,16 @@ else:
                 img = PIL.Image.open(file)
                 if img.mode != 'RGB': img = img.convert('RGB')
                 
-                # Hiển thị ảnh tràn màn hình như web truyện
+                # Hiển thị ảnh
                 st.image(img, use_container_width=True)
                 
-                # OCR xử lý ngầm
+                # OCR xử lý
                 temp_name = f"temp_{i}.jpg"
                 img.save(temp_name)
                 results = reader.readtext(temp_name, detail=0)
-                full_text += " ".join(results) + " "
+                # Thêm dấu cách sau mỗi trang để tránh dính chữ
+                full_text += " ".join(results) + " . "
                 
-                # Xóa file tạm ngay sau khi quét trang đó
                 if os.path.exists(temp_name):
                     os.remove(temp_name)
                 
@@ -74,39 +73,39 @@ else:
             
             progress_bar.progress((i + 1) / len(uploaded_files))
 
-        # --- AI REVIEW ---
+        # --- AI REVIEW & FIX DỊCH ---
         if full_text.strip():
             st.divider()
-            with st.spinner("AI đang phân tích nội dung truyện..."):
+            with st.spinner("AI đang sửa lỗi chính tả và viết review..."):
                 try:
-                    # Dịch nội dung (Giới hạn 3500 ký tự để không lỗi API)
-                    dich = GoogleTranslator(source='auto', target='vi').translate(full_text[:3500])
+                    # Dịch thô từ Google (thường bị lỗi dấu)
+                    dich_tho = GoogleTranslator(source='auto', target='vi').translate(full_text[:3000])
                     
+                    # Dùng AI làm nhiệm vụ sửa dấu, cách chữ và review
                     prompt = f"""
-                    Dưới đây là nội dung dịch thô từ các trang truyện: {dich}
+                    Nội dung sau đây được dịch từ truyện tranh nhưng bị lỗi mất dấu, dính chữ và thiếu dấu câu:
+                    "{dich_tho}"
                     
-                    Yêu cầu:
-                    1. Nhận diện nhân vật (Nếu tên là Pinyin như Lin Fan, Xiao Yan... hãy đổi sang Hán Việt như Lâm Phàm, Tiêu Viêm).
-                    2. Tóm tắt cốt truyện kịch tính của chapter này.
-                    3. Viết bài review ngắn gọn, phân tích tình huống hay nhất.
-                    4. Chấm điểm chapter trên thang điểm 10.
+                    Yêu cầu Việt hóa:
+                    1. Hãy sửa lại đoạn văn trên thành tiếng Việt chuẩn (đầy đủ dấu, cách chữ, dấu câu).
+                    2. Chuyển tên nhân vật sang Hán Việt (Ví dụ: Lin Fan -> Lâm Phàm).
+                    3. Tóm tắt nội dung và viết bài review cực hay kèm chấm điểm.
                     
-                    Trình bày đẹp mắt bằng Markdown với các icon phù hợp.
+                    Trình bày Markdown đẹp mắt.
                     """
                     
                     response = ai_model.generate_content(prompt)
                     
-                    st.subheader("🤖 Phân tích chuyên sâu từ AI")
-                    st.success("Đã hoàn thành bài review!")
+                    st.subheader("🤖 Kết quả phân tích (Đã sửa lỗi dấu & cách chữ)")
+                    st.success("Đã hoàn thành!")
                     st.markdown(response.text)
                     
                 except Exception as ai_err:
                     st.error(f"Lỗi khi gọi AI Gemini: {ai_err}")
-                    st.info("Nội dung dịch thô để bạn đọc tạm:")
-                    st.write(dich)
+                    st.info("Nội dung dịch thô để bạn xem tạm:")
+                    st.write(dich_tho)
         else:
-            st.warning("Không tìm thấy nội dung chữ để AI phân tích.")
+            st.warning("Không tìm thấy chữ để xử lý.")
 
-# Dọn dẹp footer
 st.sidebar.markdown("---")
-st.sidebar.caption("Phiên bản Pro của Việt - ITC Student")
+st.sidebar.caption("Sửa lỗi bởi Việt - ITC Student")
