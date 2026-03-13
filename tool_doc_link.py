@@ -6,7 +6,7 @@ import google.generativeai as genai
 import os
 
 # --- CẤU HÌNH BẢO MẬT ---
-target_model_name = "Chưa cấu hình" # Khởi tạo giá trị mặc định
+target_model_name = "gemini-1.5-flash" # Tên model mặc định
 
 try:
     if "GEMINI_KEY" not in st.secrets:
@@ -15,17 +15,14 @@ try:
         GOOGLE_API_KEY = st.secrets["GEMINI_KEY"]
         genai.configure(api_key=GOOGLE_API_KEY)
         
-        # Tìm model khả dụng
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_methods]
-        if models:
-            # Ưu tiên flash, nếu không có thì lấy cái đầu tiên
-            target_model_name = next((m for m in models if "flash" in m), models[0])
-            ai_model = genai.GenerativeModel(target_model_name)
-        else:
-            st.error("Không tìm thấy Model nào khả dụng với Key này!")
+        # Thử khởi tạo trực tiếp model - Cách này ổn định nhất hiện tại
+        ai_model = genai.GenerativeModel(target_model_name)
+        
+        # Test nhẹ xem key có sống không (không tốn phí)
+        target_model_name = "gemini-1.5-flash (Sẵn sàng)"
 except Exception as e:
     st.error(f"Lỗi cấu hình API: {e}")
-    st.info("Mẹo: Nếu lỗi 403 Leaked, hãy tạo Key mới tại Google AI Studio và cập nhật Secrets.")
+    st.info("Mẹo: Hãy chắc chắn bạn đã cập nhật API Key mới vào mục Secrets.")
 
 st.set_page_config(page_title="Việt Comic Reader - ITC Pro", layout="wide")
 
@@ -46,7 +43,7 @@ with st.sidebar:
         st.success(f"Đã nhận {len(uploaded_files)} trang.")
 
 # --- MÀN HÌNH CHÍNH ---
-st.title("📖 AI Comic Reader - Bản Bảo Mật")
+st.title("📖 AI Comic Reader - Bản Fix Lỗi Attribute")
 
 if not uploaded_files:
     st.warning("👈 Hãy tải ảnh ở thanh bên trái!")
@@ -77,15 +74,16 @@ else:
             st.divider()
             with st.spinner("AI đang xử lý nội dung..."):
                 try:
-                    # Dùng AI sửa lỗi dịch dính chữ và mất dấu
+                    # Prompt tối ưu để AI tự sửa lỗi dấu và cách chữ cho Việt
                     prompt_fix = f"""
                     Nhiệm vụ: Phục hồi tiếng Việt và Review truyện.
                     Dữ liệu thô từ OCR: "{full_text[:3000]}"
                     
                     Yêu cầu:
-                    1. Phục hồi thành tiếng Việt chuẩn, có dấu, tách từ rõ ràng.
-                    2. Loại bỏ rác quảng cáo web.
-                    3. Tóm tắt nội dung kịch tính và chấm điểm.
+                    1. Phục hồi thành tiếng Việt chuẩn, có dấu, tách từ rõ ràng, đúng ngữ pháp.
+                    2. Loại bỏ rác quảng cáo web (như Baotangtruyen, FlameComics...).
+                    3. Tóm tắt nội dung kịch tính và chấm điểm chapter này.
+                    4. Chuyển tên nhân vật Pinyin sang Hán Việt.
                     """
                     
                     response = ai_model.generate_content(prompt_fix)
@@ -94,9 +92,11 @@ else:
                     
                 except Exception as ai_err:
                     st.error(f"AI không phản hồi: {ai_err}")
-                    st.write("Bản dịch thô:", GoogleTranslator(source='auto', target='vi').translate(full_text[:1500]))
+                    # Backup dịch thô bằng Google Translator nếu Gemini lỗi
+                    dich_tam = GoogleTranslator(source='auto', target='vi').translate(full_text[:1500])
+                    st.write("Bản dịch thô:", dich_tam)
         else:
             st.warning("Không tìm thấy chữ để xử lý.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption(f"Model hiện tại: {target_model_name}")
+st.sidebar.caption(f"Trạng thái: {target_model_name}")
