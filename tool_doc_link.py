@@ -8,7 +8,7 @@ import google.generativeai as genai
 import time
 
 # --- CẤU HÌNH AI ---
-GOOGLE_API_KEY = "NHAP_API_KEY_CUA_VIET_TAI_DAY"
+GOOGLE_API_KEY = "AIzaSyAAp0V1-OyTAYIoW-g26DzalBY32gXQ6fE"
 genai.configure(api_key=GOOGLE_API_KEY)
 ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
